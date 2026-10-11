@@ -48,7 +48,7 @@ _Static_assert(MIC_BUF_BYTES <= 4092, "one DMA buffer is capped at 4092 bytes");
 _Static_assert(AUDIO_BITS_PER_SAMPLE == 16 && AUDIO_CHANNELS == 1, "conversion below assumes 16-bit mono");
 _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "stream format is little-endian PCM");
 
-#define AUDIO_TASK_PRIO       3
+#define AUDIO_TASK_PRIO       4
 #define AUDIO_TASK_STACK      4096
 #define REPORT_MS             2000
 
@@ -285,7 +285,7 @@ void shake_watch_task(void *parameters)
 
             // Ignore triggers that occur within 300 ms.
             if (last_pir_sent_time == 0 ||
-                (now - last_pir_sent_time) > pdMS_TO_TICKS(300)) {
+                (now - last_pir_sent_time) > pdMS_TO_TICKS(4000)) {
 
                 last_pir_sent_time = now;
 
