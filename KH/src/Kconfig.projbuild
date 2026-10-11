@@ -1,0 +1,41 @@
+menu "i2s_mic Wi-Fi audio sender"
+
+    config AUDIO_TX_PEER_IP
+        string "Receiver IPv4 address"
+        default "192.168.1.100"
+        help
+            Where the audio is sent: the board running the speaker example,
+            or a PC running tools/udp_audio_rx.py. Static; set it to the
+            receiver's address on your network.
+
+    config AUDIO_TX_PORT
+        int "UDP port"
+        default 5004
+        range 1 65535
+        help
+            Used as both this board's local port and the receiver's port,
+            so both sides use the same value. Must match the receiver.
+
+    config AUDIO_TX_MIC_GPIO_BCK
+        int "Microphone I2S BCK (SCK) GPIO"
+        default 16
+        help
+            Per-target defaults are in sdkconfig.defaults.<target>.
+
+    config AUDIO_TX_MIC_GPIO_WS
+        int "Microphone I2S WS GPIO"
+        default 17
+
+    config AUDIO_TX_MIC_GPIO_DATA
+        int "Microphone I2S SD (data) GPIO"
+        default 18
+
+    config AUDIO_UPLOAD_URL
+        string "Insert upload url"
+        default "https://server-production-dd77a.up.railway.app/upload"
+    
+    config AUDIO_DEVICE_KEY
+        string "insert device key"
+        default "change-me"
+
+endmenu

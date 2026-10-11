@@ -1,0 +1,30 @@
+dependencies:
+  idf: '>=6.0,<6.1'
+description: 'Point-to-point UDP datagram transport for ESP-IDF v6.0.x. One socket,
+  one peer, one stream: a 12-byte header with sequence number and session, strict
+  validation of every received datagram, zero-copy send and receive, and a receive
+  timeout that never ends early. No tasks, no callbacks, no buffering, no retransmission:
+  it reports loss and restarts, you decide.
+
+  '
+files:
+  exclude:
+  - .git/**/*
+  - host_test/**/*
+  - '**/build/**/*'
+  - dist/**/*
+  - UDP_LINK_SPEC.md
+  use_gitignore: true
+tags:
+- udp
+- wifi
+- network
+- transport
+- datagram
+- lwip
+- sockets
+- streaming
+- audio
+- realtime
+url: https://github.com/embedblocks/udp_link.git
+version: 0.1.0

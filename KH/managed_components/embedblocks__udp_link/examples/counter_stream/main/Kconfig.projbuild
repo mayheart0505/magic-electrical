@@ -1,0 +1,31 @@
+menu "udp_link counter stream"
+
+    config COUNTER_LOOPBACK
+        bool "Loopback mode (one board, two instances via 127.0.0.1)"
+        default y
+        help
+            Off: two-board mode over Wi-Fi. Configure Wi-Fi under
+            "Example Connection Configuration" and set the peer address below.
+
+    config COUNTER_PEER_IP
+        string "Peer board IPv4 address (two-board mode)"
+        default "192.168.1.20"
+        depends on !COUNTER_LOOPBACK
+
+    config COUNTER_PORT
+        int "UDP port, same on both boards (two-board mode)"
+        default 5000
+        range 1 65535
+        depends on !COUNTER_LOOPBACK
+
+    config COUNTER_PAYLOAD_LEN
+        int "Payload length in bytes"
+        default 256
+        range 4 1460
+
+    config COUNTER_PERIOD_MS
+        int "Send period in ms (at least one RTOS tick)"
+        default 10
+        range 1 10000
+
+endmenu

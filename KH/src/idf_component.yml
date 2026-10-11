@@ -1,0 +1,5 @@
+dependencies:
+  embedblocks/udp_link: ^0.1.0
+  idf: '>=6.0,<6.1'
+  protocol_examples_common:
+    path: ${IDF_PATH}/examples/common_components/protocol_examples_common

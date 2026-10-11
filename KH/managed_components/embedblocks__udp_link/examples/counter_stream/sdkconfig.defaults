@@ -1,0 +1,8 @@
+# Required by udp_link (the build fails without it)
+CONFIG_LWIP_CHECKSUM_CHECK_UDP=y
+# Loopback mode
+CONFIG_LWIP_NETIF_LOOPBACK=y
+# udp_link's select() wait
+CONFIG_VFS_SUPPORT_SELECT=y
+# Tick rate of the verification build
+CONFIG_FREERTOS_HZ=1000
