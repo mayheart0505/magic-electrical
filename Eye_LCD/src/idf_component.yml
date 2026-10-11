@@ -1,2 +1,0 @@
-dependencies:
-  espressif/esp_lcd_gc9a01: "^2.0.4"
