@@ -61,15 +61,10 @@ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "stream format is litt
 static char s_reply[REPLY_MAX];
 static size_t s_reply_len;
 
-#define I2S_BCLK GPIO_NUM_5   // ESP32 -> amp BCL
-#define I2S_LRC  GPIO_NUM_6   // ESP32 -> amp LRC / WS
-#define I2S_DOUT GPIO_NUM_7   // ESP32 data out -> amp DIN
+
 #define SHAKER_PIN GPIO_NUM_10
 
-// Start quiet: 10% PCM amplitude
-#define VOLUME_DIVISOR 10
 
-static const char *SPEAKTAG = "MERRY_XMAS";
 static i2s_chan_handle_t tx_handle = NULL;
 
 /* ---- State ------------------------------------------------------------- */
@@ -267,189 +262,54 @@ static esp_err_t receive(const uint8_t *wav, size_t len){
     esp_http_client_cleanup(client);
 }
 
-void IRAM_ATTR SHAKE_ISR(void *parameter){
+void IRAM_ATTR SHAKE_ISR(void *parameter)
+{
     BaseType_t xHigherPrioTaskWoken = pdFALSE;
-    xSemaphoreGiveFromISR(xPIRSem, &xHigherPrioTaskWoken);
-    if (xHigherPrioTaskWoken == pdTRUE){
+
+    xSemaphoreGiveFromISR(ShakeSem, &xHigherPrioTaskWoken);
+
+    if (xHigherPrioTaskWoken == pdTRUE) {
         portYIELD_FROM_ISR();
     }
 }
 
-static void speaker_up(void){
-    ESP_LOGI(TAG, "Starting I2S audio");
-
-    i2s_chan_config_t chan_cfg =
-        I2S_CHANNEL_DEFAULT_CONFIG(
-            I2S_NUM_1,
-            I2S_ROLE_MASTER
-        );
-
-    ESP_ERROR_CHECK(
-        i2s_new_channel(
-            &chan_cfg,
-            &tx_handle,
-            NULL
-        )
-    );
-
-    i2s_std_config_t std_cfg = {
-        .clk_cfg =
-            I2S_STD_CLK_DEFAULT_CONFIG(16000),
-
-        .slot_cfg = {
-            .data_bit_width =
-                I2S_DATA_BIT_WIDTH_16BIT,
-
-            .slot_bit_width =
-                I2S_SLOT_BIT_WIDTH_AUTO,
-
-            .slot_mode =
-                I2S_SLOT_MODE_MONO,
-
-            .slot_mask =
-                I2S_STD_SLOT_BOTH,
-
-            .ws_width =
-                I2S_DATA_BIT_WIDTH_16BIT,
-
-            .ws_pol = false,
-            .bit_shift = false,
-        },
-
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
-            .bclk = I2S_BCLK,
-            .ws   = I2S_LRC,
-            .dout = I2S_DOUT,
-            .din  = I2S_GPIO_UNUSED,
-
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv = false,
-            },
-        },
-    };
-
-    ESP_ERROR_CHECK(
-        i2s_channel_init_std_mode(
-            tx_handle,
-            &std_cfg
-        )
-    );
-
-    ESP_ERROR_CHECK(
-        i2s_channel_enable(tx_handle)
-    );
-}
-
-
-static esp_err_t play_file(const char *name)
+void shake_watch_task(void *parameters)
 {
-    char path[128];
-
-    // Build the full path to the WAV file.
-    int path_len = snprintf(path, sizeof(path),
-                            "/sdcard/%s", name);
-
-    if (path_len < 0 || path_len >= sizeof(path)) {
-        ESP_LOGE(TAG, "File path is too long");
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    // Open the file in binary read mode.
-    FILE *f = fopen(path, "rb");
-
-    if (f == NULL) {
-        ESP_LOGE(TAG, "Failed to open %s (errno=%d)",
-                 path, errno);
-        return ESP_FAIL;
-    }
-
-    // Skip the standard 44-byte PCM WAV header.
-    if (fseek(f, 44, SEEK_SET) != 0) {
-        ESP_LOGE(TAG, "Failed to skip WAV header: %s", path);
-        fclose(f);
-        return ESP_FAIL;
-    }
-
-    // 512 int16_t samples = 1024 bytes per chunk.
-    int16_t chunk[512];
+    TickType_t last_pir_sent_time = 0;
 
     while (1) {
-        // Read up to sizeof(chunk) bytes of audio.
-        size_t n = fread(chunk, 1, sizeof(chunk), f);
+        // Sleep until the PIR interrupt signals the semaphore.
+        if (xSemaphoreTake(ShakeSem, portMAX_DELAY) == pdTRUE) {
 
-        if (n == 0) {
-            if (ferror(f)) {
-                ESP_LOGE(TAG, "Error reading %s", path);
-            }
-            break;
-        }
+            TickType_t now = xTaskGetTickCount();
 
-        // Scale only complete 16-bit samples.
-        for (size_t i = 0; i < n / sizeof(int16_t); i++) {
-            chunk[i] /= VOLUME_DIVISOR;
-        }
-
-        // Send exactly the number of bytes read.
-        size_t written = 0;
-        esp_err_t err = i2s_channel_write(
-            tx_handle,
-            chunk,
-            n,
-            &written,
-            portMAX_DELAY
-        );
-
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "I2S write failed: %s",
-                     esp_err_to_name(err));
-            fclose(f);
-            return err;
-        }
-
-        // Detect an incomplete write rather than silently
-        // dropping audio bytes.
-        if (written != n) {
-            ESP_LOGE(TAG, "Short I2S write: %u of %u bytes",
-                     (unsigned)written, (unsigned)n);
-            fclose(f);
-            return ESP_FAIL;
-        }
-    }
-
-    bool read_error = ferror(f);
-    fclose(f);
-
-    if (read_error) {
-        return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "Finished playing %s", path);
-    return ESP_OK;
-}
-
-void shake_watch_task(void *parameters){
-      TickType_t last_pir_sent_time = 0;
-    TickType_t last_telemetry_sent_time = 0;
-    
-    while(1){
-                TickType_t now = xTaskGetTickCount();
-        if (xSemaphoreTake(ShakeSem,0) == pdTRUE){
+            // Ignore triggers that occur within 300 ms.
             if (last_pir_sent_time == 0 ||
-                (now - last_pir_sent_time) > pdMS_TO_TICKS(300)){
-                printf("Reached\n");
+                (now - last_pir_sent_time) > pdMS_TO_TICKS(300)) {
+
+                last_pir_sent_time = now;
+
+                ESP_LOGI(TAG, "PIR triggered; recording WAV");
+
                 size_t len = 0;
                 uint8_t *wav = record_wav(&len);
-                    if (wav != NULL){
-                        upload_wav(wav,len);
-                        free(wav);
+
+                if (wav != NULL) {
+                    esp_err_t err = upload_wav(wav, len);
+
+                    if (err == ESP_OK) {
+                        ESP_LOGI(TAG, "WAV upload request completed");
+                    } else {
+                        ESP_LOGE(TAG, "WAV upload failed: %s",
+                                 esp_err_to_name(err));
                     }
+
+                    free(wav);
+                } else {
+                    ESP_LOGE(TAG, "WAV recording failed");
+                }
             }
         }
-
-        
     }
 }
 
@@ -458,8 +318,7 @@ void app_main(void)
 
     network_up();
     mic_up();
-    sd_up();
-    speaker_up();
+
     ShakeSem = xSemaphoreCreateBinary();
     if( ShakeSem != NULL ){
        // The semaphore was created successfully.
@@ -476,10 +335,11 @@ void app_main(void)
     gpio_set_intr_type(SHAKER_PIN, GPIO_INTR_POSEDGE);
     printf("we are getting stuck\n");
     gpio_isr_handler_add(SHAKER_PIN, SHAKE_ISR, NULL);
-    esp_err_t err = play_file("fahh.WAV");
+    // esp_err_t err = play_file("fahh.WAV");
+    xTaskCreate(shake_watch_task, "shake", 8192, NULL,5,NULL);
 
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Playback failed");
-    }
-    
+    while (1) {
+    ESP_LOGI(TAG, "pin=%d", gpio_get_level(SHAKER_PIN));
+    vTaskDelay(pdMS_TO_TICKS(200));
+}
 }
