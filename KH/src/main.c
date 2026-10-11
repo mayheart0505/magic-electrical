@@ -19,14 +19,15 @@
 #include "esp_heap_caps.h"
 #include "sdkconfig.h"
 #include "sd_main.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"       // For semaphore
 
-
-// #include "udp_link.h"
 #include "i2s_mic.h"
 #include "driver/i2s_std.h"
 #include "audio_stream_format.h"
 
 static const char *TAG = "audio_tx";
+static SemaphoreHandle_t ShakeSem;
 
 /* ---- Capture configuration ---------------------------------------------
  *
@@ -63,6 +64,7 @@ static size_t s_reply_len;
 #define I2S_BCLK GPIO_NUM_5   // ESP32 -> amp BCL
 #define I2S_LRC  GPIO_NUM_6   // ESP32 -> amp LRC / WS
 #define I2S_DOUT GPIO_NUM_7   // ESP32 data out -> amp DIN
+#define SHAKER_PIN GPIO_NUM_10
 
 // Start quiet: 10% PCM amplitude
 #define VOLUME_DIVISOR 10
@@ -111,24 +113,6 @@ static void network_up(void)
     }
 }
 
-// static void link_up(void)
-// {
-//     esp_ip4_addr_t peer;
-//     ESP_ERROR_CHECK(esp_netif_str_to_ip4(CONFIG_AUDIO_TX_PEER_IP, &peer));
-
-//     const udp_link_config_t cfg = {
-//         .local_port  = CONFIG_AUDIO_TX_PORT,
-//         .peer_ip     = peer,
-//         .peer_port   = CONFIG_AUDIO_TX_PORT,
-//         .stream_id   = AUDIO_STREAM_ID,
-//         .max_payload = AUDIO_FRAME_BYTES,
-//     };
-//     ESP_ERROR_CHECK(udp_link_open(&cfg, &s_link));
-
-//     ESP_LOGI(TAG, "sending to %s:%d, stream 0x%02X, %d-byte frames (%d ms of %d Hz %d-bit mono)",
-//              CONFIG_AUDIO_TX_PEER_IP, CONFIG_AUDIO_TX_PORT, AUDIO_STREAM_ID, AUDIO_FRAME_BYTES,
-//              AUDIO_FRAME_MS, AUDIO_SAMPLE_RATE, AUDIO_BITS_PER_SAMPLE);
-// }
 
 static void mic_up(void)
 {
@@ -228,7 +212,6 @@ static esp_err_t upload_wav(const uint8_t *wav, size_t len){
     .method = HTTP_METHOD_POST,
     .crt_bundle_attach = esp_crt_bundle_attach,
     .timeout_ms = 20000,
-    .event_handler = http_event,
     };
     esp_http_client_handle_t client = esp_http_client_init(&web_config);
     if (client == NULL){
@@ -244,10 +227,6 @@ static esp_err_t upload_wav(const uint8_t *wav, size_t len){
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "upload status %d", esp_http_client_get_status_code(client));
         int status = esp_http_client_get_status_code(client);    
-        if (status == 200){
-            s_reply[s_reply_len] = '\0';
-            ESP_LOGI(TAG,"heard: %s", s_reply);
-        }
        
     } else {
         ESP_LOGE(TAG, "upload failed: %s", esp_err_to_name(err));
@@ -257,40 +236,44 @@ static esp_err_t upload_wav(const uint8_t *wav, size_t len){
     return err;
 }
 
-// static void play_clip_task(void *arg){
-//     vTaskDelay(pdMS_TO_TICKS(500));
-//     int16_t chunk[512];
-//     size_t total  = sizeof(_MERRY_CHRISTMAS_PCM);
-//     size_t offset = 0;      
-//     ESP_LOGI(
-//         SPEAKTAG,
-//         "PCM size: %u bytes",
-//         (unsigned int)total
-//     );
+static esp_err_t receive(const uint8_t *wav, size_t len){
+    esp_http_client_config_t web_config = {
+    .url = CONFIG_AUDIO_UPLOAD_URL,
+    .method = HTTP_METHOD_POST,
+    .event_handler = http_event,
+    .crt_bundle_attach = esp_crt_bundle_attach,
+    .timeout_ms = 20000,
+};
+
+    esp_http_client_handle_t client = esp_http_client_init(&web_config);
+    if (client == NULL){
+        return ESP_FAIL;
+    };
 
 
-//     while (offset < total) {
-//     // n = bytes left (total - offset), but no more than sizeof(chunk)
-//     // memcpy(chunk, _MERRY_CHRISTMAS_PCM + offset, n);
-//     // scale: for i in 0 .. n/2 - 1, chunk[i] = chunk[i] / VOLUME_DIVISOR
-//     // i2s_channel_write(tx_handle, chunk, n, &written, portMAX_DELAY);
-//     // offset += n;
-//         size_t n = total - offset;
-//         size_t written = 0; 
-//         if (n > sizeof(chunk)){
-//             n = sizeof(chunk);
-//         }
-//         memcpy(chunk, _MERRY_CHRISTMAS_PCM + offset, n);
-//         for (size_t i = 0; i < ((n/2)); i++){
-//             chunk[i] = chunk[i] / VOLUME_DIVISOR;
-           
-//         }
-//         i2s_channel_write(tx_handle,chunk,n,&written, portMAX_DELAY);
-//         offset += n;
-//     }
-//     ESP_LOGI(SPEAKTAG, "Finished playing");
-//     vTaskDelete(NULL);
-// }
+     s_reply_len = 0;
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        int status = esp_http_client_get_status_code(client);    
+        if (status == 200){
+            s_reply[s_reply_len] = '\0';
+            ESP_LOGI(TAG,"heard: %s", s_reply);
+        }
+       
+    } else {
+        ESP_LOGE(TAG, "failed to get text because: %s", esp_err_to_name(err));
+    }
+    esp_err_to_name(err);
+    esp_http_client_cleanup(client);
+}
+
+void IRAM_ATTR SHAKE_ISR(void *parameter){
+    BaseType_t xHigherPrioTaskWoken = pdFALSE;
+    xSemaphoreGiveFromISR(xPIRSem, &xHigherPrioTaskWoken);
+    if (xHigherPrioTaskWoken == pdTRUE){
+        portYIELD_FROM_ISR();
+    }
+}
 
 static void speaker_up(void){
     ESP_LOGI(TAG, "Starting I2S audio");
@@ -447,41 +430,56 @@ static esp_err_t play_file(const char *name)
     return ESP_OK;
 }
 
+void shake_watch_task(void *parameters){
+      TickType_t last_pir_sent_time = 0;
+    TickType_t last_telemetry_sent_time = 0;
+    
+    while(1){
+                TickType_t now = xTaskGetTickCount();
+        if (xSemaphoreTake(ShakeSem,0) == pdTRUE){
+            if (last_pir_sent_time == 0 ||
+                (now - last_pir_sent_time) > pdMS_TO_TICKS(300)){
+                printf("Reached\n");
+                size_t len = 0;
+                uint8_t *wav = record_wav(&len);
+                    if (wav != NULL){
+                        upload_wav(wav,len);
+                        free(wav);
+                    }
+            }
+        }
+
+        
+    }
+}
 
 void app_main(void)
 {
 
-    // network_up();
-    // // link_up();
-    // mic_up();
-    // speaker_up();
-    esp_log_level_set("sdmmc", ESP_LOG_VERBOSE);
-esp_log_level_set("sdspi_transaction", ESP_LOG_VERBOSE);
-esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_VERBOSE);
- vTaskDelay(pdMS_TO_TICKS(5000));
-
+    network_up();
+    mic_up();
     sd_up();
     speaker_up();
-
-     vTaskDelay(pdMS_TO_TICKS(500));
-
+    ShakeSem = xSemaphoreCreateBinary();
+    if( ShakeSem != NULL ){
+       // The semaphore was created successfully.
+       // The semaphore can now be used.
+       printf("Sema made\n");
+    }
+    assert(ShakeSem);
+    gpio_install_isr_service(0);
+    ESP_LOGI(TAG,"configuring PIR sensor\n");
+    printf("configuration done\n");
+    gpio_reset_pin(SHAKER_PIN);
+    gpio_set_direction(SHAKER_PIN, GPIO_MODE_INPUT); //PIR Sensor will input a signal
+    gpio_pullup_en(SHAKER_PIN);
+    gpio_set_intr_type(SHAKER_PIN, GPIO_INTR_POSEDGE);
+    printf("we are getting stuck\n");
+    gpio_isr_handler_add(SHAKER_PIN, SHAKE_ISR, NULL);
     esp_err_t err = play_file("fahh.WAV");
 
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Playback failed");
     }
-
-    
-
-    
-    
-
-    //     size_t len = 0;
-    // uint8_t *wav = record_wav(&len);
-    //     if (wav != NULL){
-    //         upload_wav(wav,len);
-    //         free(wav);
-    //     }
-    //    xTaskCreate(play_clip_task, "play", 4096, NULL, 5, NULL);
     
 }
