@@ -989,13 +989,15 @@ CONFIG_PARTITION_TABLE_MD5=y
 #
 # i2s_mic Wi-Fi audio sender
 #
-# default:
-CONFIG_AUDIO_TX_PEER_IP="192.168.1.100"
+CONFIG_AUDIO_TX_PEER_IP="192.168.137.1"
 # default:
 CONFIG_AUDIO_TX_PORT=5004
 CONFIG_AUDIO_TX_MIC_GPIO_BCK=6
 CONFIG_AUDIO_TX_MIC_GPIO_WS=5
 CONFIG_AUDIO_TX_MIC_GPIO_DATA=7
+# default:
+CONFIG_AUDIO_UPLOAD_URL="https://server-production-dd77a.up.railway.app/upload"
+CONFIG_AUDIO_DEVICE_KEY="RUrbVmxf4Bp8at6hFHOl0oAuQI3MjiPv"
 # end of i2s_mic Wi-Fi audio sender
 
 #
